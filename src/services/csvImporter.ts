@@ -203,12 +203,14 @@ export class ChunkCsvUploader {
           }
 
           // Si está pausado, pausar el parser de PapaParse
+          let resumedFromUserPause = false;
           while (this.isPaused && !this.isCancelled) {
             parser.pause();
+            resumedFromUserPause = true;
             await new Promise((r) => setTimeout(r, 400));
           }
           if (this.isCancelled) { parser.abort(); return resolve({ success: false, totalProcessed: this.processedRows, errorsCount: this.errorsCount }); }
-          if (!this.isPaused) parser.resume();
+          if (resumedFromUserPause) parser.resume();
 
           const row = results.data as string[];
           if (!row || row.length === 0) return;
