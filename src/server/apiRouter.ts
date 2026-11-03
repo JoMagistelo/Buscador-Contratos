@@ -233,7 +233,8 @@ export function createApiApp(bindings?: EnvBindings) {
       );
 
       return c.json({
-        success: true,
+        success: result.errors === 0 && (!isLastChunk || result.completed),
+        completed: result.completed,
         chunkIndex,
         inserted: result.inserted,
         errors: result.errors,
