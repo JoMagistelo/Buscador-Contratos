@@ -127,9 +127,9 @@ export async function insertContratosBatch(
     sql: `INSERT INTO archivos_importados (sha256, nombre_archivo, year, total_filas, filas_importadas, filas_anomalas, tamano_bytes, estado, fecha_importacion, detalles_json)
           VALUES (?, ?, ?, ?, ?, 0, ?, 'en_progreso', datetime('now'), '{}')
           ON CONFLICT(sha256) DO UPDATE SET
-            filas_importadas = filas_importadas,
-            estado = CASE WHEN ? = 1 THEN 'completado' ELSE 'en_progreso' END;`,
-    args: [fileSha256, fileName, year, totalFileRows, 0, fileSizeBytes, isLastChunk ? 1 : 0],
+            total_filas = MAX(archivos_importados.total_filas, excluded.total_filas),
+            tamano_bytes = excluded.tamano_bytes;`,
+    args: [fileSha256, fileName, year, totalFileRows, 0, fileSizeBytes],
   });
 
   // Ejecutamos en transacciones por lotes de 50 o usando client.batch
@@ -199,7 +199,7 @@ export async function insertContratosBatch(
       const rawJson = JSON.stringify(d);
 
       statements.push({
-        sql: `INSERT OR REPLACE INTO contratos (
+        sql: `INSERT OR IGNORE INTO contratos (
           id, codigo_contrato, titulo_contrato, descripcion_contrato, fecha_inicio, fecha_fin,
           importe_contrato, moneda, estatus_contrato, convenio_modificatorio_ind, monto_convenio,
           plazo_convenio, fecha_firma_convenio, moneda_convenio, convenio_modificatorio_tipo,
@@ -236,29 +236,34 @@ export async function insertContratosBatch(
 
   if (statements.length > 0) {
     try {
-      await client.batch(statements, 'write');
-      inserted = statements.length;
-
-      // Actualizar contador en archivos_importados
-      await client.execute({
-        sql: `UPDATE archivos_importados
-              SET filas_importadas = filas_importadas + ?,
-                  estado = CASE WHEN ? = 1 THEN 'completado' ELSE 'en_progreso' END
-              WHERE sha256 = ?;`,
-        args: [inserted, isLastChunk ? 1 : 0, fileSha256],
-      });
-    } catch (e: any) {
-      // Reintentar fila por fila en caso de fallo atómico
+      const results = await client.batch(statements, 'write');
+      inserted = results.reduce((sum, result) => sum + Number(result.rowsAffected || 0), 0);
+    } catch {
+      // Reintentos seguros: INSERT OR IGNORE evita que un lote ya confirmado
+      // vuelva a contabilizarse cuando falla la conexión del navegador.
       for (const stmt of statements) {
         try {
-          await client.execute(stmt);
-          inserted++;
+          const result = await client.execute(stmt);
+          inserted += Number(result.rowsAffected || 0);
         } catch {
           errors++;
         }
       }
     }
   }
+
+  // El final solo es válido si están realmente TODAS las filas esperadas.
+  // También se ejecuta para el lote final vacío.
+  await client.execute({
+    sql: `UPDATE archivos_importados
+          SET filas_importadas = filas_importadas + ?,
+              filas_anomalas = filas_anomalas + ?,
+              estado = CASE
+                WHEN ? = 1 AND filas_importadas + ? = total_filas AND ? = 0
+                THEN 'completado' ELSE 'en_progreso' END
+          WHERE sha256 = ?`,
+    args: [inserted, errors, isLastChunk ? 1 : 0, inserted, errors, fileSha256],
+  });
 
   return { inserted, errors };
 }
