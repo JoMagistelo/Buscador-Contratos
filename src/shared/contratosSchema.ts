@@ -95,6 +95,23 @@ export const CSV_COLUMN_KEYS_73: string[] = [
   "Dirección del anuncio"
 ];
 
+/**
+ * Compatible con la base compactada: el campo raw_data_json puede ser
+ * un objeto legado, o una matriz compacta con 73 valores originales.
+ */
+export function hydrateRawData(raw: unknown): Record<string, unknown> {
+  if (Array.isArray(raw)) {
+    if (raw.length !== CSV_COLUMN_KEYS_73.length) {
+      throw new Error('Contrato compacto inválido: se esperan 73 campos');
+    }
+    return Object.fromEntries(CSV_COLUMN_KEYS_73.map((key, index) => [key, raw[index]]));
+  }
+  if (raw && typeof raw === 'object') {
+    return raw as Record<string, unknown>;
+  }
+  return {};
+}
+
 export const COLUMNAS_OFICIALES_73: ColumnaDef[] = [
   { index: 0, id: 'csv_0', headerOriginal: "Orden de gobierno", etiqueta: "Orden de gobierno", categoria: 'adicional', tipo: 'texto', descripcion: 'Campo oficial CSV 1/73' },
   { index: 1, id: 'csv_1', headerOriginal: "Clave Ramo", etiqueta: "Clave Ramo", categoria: 'adicional', tipo: 'numero', descripcion: 'Campo oficial CSV 2/73' },
