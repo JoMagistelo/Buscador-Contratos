@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { X, ExternalLink, Copy, Check, FileText, DollarSign, Building, Shield, Users, Layers, Info } from 'lucide-react';
-import { COLUMNAS_OFICIALES_73, formatCurrency } from '../shared/contratosSchema.js';
+import { COLUMNAS_OFICIALES_73, CSV_COLUMN_KEYS_73, formatCurrency } from '../shared/contratosSchema.js';
 
 interface ContractModalProps {
   contract: any | null;
@@ -36,24 +36,13 @@ export const ContractModal: React.FC<ContractModalProps> = ({ contract, isOpen, 
     ? COLUMNAS_OFICIALES_73
     : COLUMNAS_OFICIALES_73.filter(c => c.categoria === activeCategory);
 
-  // Helper para extraer el valor exacto de la columna preservando las columnas repetidas
+  // Los valores originales tienen prioridad sobre campos derivados; las columnas
+  // duplicadas están identificadas por su posición real (45/55 y 46/56).
   const getColumnValue = (col: typeof COLUMNAS_OFICIALES_73[0]) => {
-    // 1. Revisar en campos directos del contrato
-    if (contract[col.id] !== undefined && contract[col.id] !== null && contract[col.id] !== '') {
-      return contract[col.id];
-    }
-    // 2. Manejo de duplicados en rawData
-    if (col.id === 'moneda_contrato') return rawData['Moneda_1'] || rawData['Moneda'] || contract.moneda || '';
-    if (col.id === 'moneda_convenio') return rawData['Moneda_2'] || rawData['moneda_convenio'] || '';
-    if (col.id === 'convenio_modificatorio_ind') return rawData['Convenio modificatorio_1'] || rawData['Convenio modificatorio'] || contract.convenio_modificatorio_ind || '';
-    if (col.id === 'convenio_modificatorio_tipo') return rawData['Convenio modificatorio_2'] || rawData['convenio_modificatorio_tipo'] || '';
-
-    // 3. Revisar por encabezado original en rawData
-    if (rawData[col.headerOriginal] !== undefined && rawData[col.headerOriginal] !== null) {
-      return rawData[col.headerOriginal];
-    }
-
-    return '';
+    const rawKey = CSV_COLUMN_KEYS_73[col.index];
+    if (Object.prototype.hasOwnProperty.call(rawData, rawKey)) return rawData[rawKey];
+    if (Object.prototype.hasOwnProperty.call(rawData, col.headerOriginal)) return rawData[col.headerOriginal];
+    return contract[col.id] ?? '';
   };
 
   return (

@@ -10,10 +10,8 @@ export default {
       return app.fetch(request, env, ctx);
     }
 
-    // Para Cloudflare Workers con Static Assets:
-    // Las rutas estáticas las resuelve el runtime de Cloudflare Assets automáticamente.
-    // En caso de que se invoque el worker para el fallback SPA:
-    const app = createApiApp(env);
-    return app.fetch(request, env, ctx);
+    // El Worker atiende la API; los assets del sitio se sirven mediante ASSETS.
+    if (env.ASSETS) return env.ASSETS.fetch(request);
+    return new Response('Not Found', { status: 404 });
   },
 };

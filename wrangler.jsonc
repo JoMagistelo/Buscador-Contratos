@@ -9,12 +9,6 @@
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
-    "html_handling": "single-page-application"
-  },
-  "vars": {
-    "TURSO_DATABASE_URL": "",
-    "TURSO_AUTH_TOKEN": "",
-    "ADMIN_PASSWORD": "",
-    "ADMIN_SESSION_SECRET": ""
+    "not_found_handling": "single-page-application"
   }
 }

@@ -1,0 +1,23 @@
+name: Validate application
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install
+        run: npm install --no-audit --no-fund
+      - name: Typecheck
+        run: npm run lint
+      - name: Unit tests
+        run: npm test
+      - name: Build frontend
+        run: npm run build
+      - name: Validate Cloudflare Worker bundle
+        run: npx wrangler deploy --dry-run

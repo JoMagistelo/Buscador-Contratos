@@ -1,32 +1,31 @@
-import { createClient, Client } from '@libsql/client';
-import { normalizeName, normalizeRFC, parseNumeric, parseDateString } from '../shared/contratosSchema.js';
+import { createClient as createLocalClient } from '@libsql/client';
+import { createClient as createTursoClient } from '@tursodatabase/serverless/compat';
+import type { Client } from '@libsql/client';
+import { normalizeName, normalizeRFC, parseNumeric, parseDateString, stringSimilarity } from '../shared/contratosSchema.js';
 
-let cachedClient: Client | null = null;
-
+/**
+ * Remote connections use the Turso Cloud HTTP driver, compatible with Workers.
+ * The local libSQL file fallback is permitted ONLY in Node development.
+ * Never silently use a local database in production when secrets are missing.
+ */
 export function getDbClient(env?: { TURSO_DATABASE_URL?: string; TURSO_AUTH_TOKEN?: string }): Client {
-  if (cachedClient) return cachedClient;
-
-  const url = env?.TURSO_DATABASE_URL || process.env.TURSO_DATABASE_URL;
-  const authToken = env?.TURSO_AUTH_TOKEN || process.env.TURSO_AUTH_TOKEN;
-
-  if (url && url.trim().length > 0) {
-    cachedClient = createClient({
-      url,
-      authToken,
-    });
-  } else {
-    // Modo local seguro en desarrollo: archivo SQLite local persistente
-    cachedClient = createClient({
-      url: 'file:contratos_local.db',
-    });
+  const url = env?.TURSO_DATABASE_URL || (typeof process !== 'undefined' ? process.env.TURSO_DATABASE_URL : '') || '';
+  const authToken = env?.TURSO_AUTH_TOKEN || (typeof process !== 'undefined' ? process.env.TURSO_AUTH_TOKEN : '') || '';
+  if (url.trim()) {
+    if (!authToken.trim()) throw new Error('TURSO_AUTH_TOKEN no configurado');
+    const httpsUrl = url.replace(/^libsql:\/\//i, 'https://');
+    if (!httpsUrl.startsWith('https://')) throw new Error('TURSO_DATABASE_URL debe usar HTTPS');
+    return createTursoClient({ url: httpsUrl, authToken }) as unknown as Client;
   }
-
-  return cachedClient;
+  if (typeof process === 'undefined' || process.env.NODE_ENV === 'production') {
+    throw new Error('Turso no configurado: faltan las credenciales de la base remota');
+  }
+  return createLocalClient({ url: 'file:contratos_local.db' });
 }
 
 export function isUsingTursoRemote(env?: { TURSO_DATABASE_URL?: string }): boolean {
-  const url = env?.TURSO_DATABASE_URL || process.env.TURSO_DATABASE_URL;
-  return Boolean(url && url.startsWith('libsql://'));
+  const url = env?.TURSO_DATABASE_URL || (typeof process !== 'undefined' ? process.env.TURSO_DATABASE_URL : '') || '';
+  return /^https:\/\/|^libsql:\/\//i.test(url);
 }
 
 export async function initDatabaseTables(client: Client): Promise<{ success: boolean; message: string }> {
@@ -119,7 +118,7 @@ export async function insertContratosBatch(
   chunkIndex: number,
   isLastChunk: boolean,
   rows: RawContratoRow[]
-): Promise<{ inserted: number; errors: number }> {
+): Promise<{ inserted: number; errors: number; completed: boolean }> {
   let inserted = 0;
   let errors = 0;
 
@@ -128,9 +127,9 @@ export async function insertContratosBatch(
     sql: `INSERT INTO archivos_importados (sha256, nombre_archivo, year, total_filas, filas_importadas, filas_anomalas, tamano_bytes, estado, fecha_importacion, detalles_json)
           VALUES (?, ?, ?, ?, ?, 0, ?, 'en_progreso', datetime('now'), '{}')
           ON CONFLICT(sha256) DO UPDATE SET
-            filas_importadas = filas_importadas,
-            estado = CASE WHEN ? = 1 THEN 'completado' ELSE 'en_progreso' END;`,
-    args: [fileSha256, fileName, year, totalFileRows, 0, fileSizeBytes, isLastChunk ? 1 : 0],
+            total_filas = MAX(archivos_importados.total_filas, excluded.total_filas),
+            tamano_bytes = excluded.tamano_bytes;`,
+    args: [fileSha256, fileName, year, totalFileRows, 0, fileSizeBytes],
   });
 
   // Ejecutamos en transacciones por lotes de 50 o usando client.batch
@@ -154,11 +153,15 @@ export async function insertContratosBatch(
       const rawFechaFin = String(d['Fecha de fin del contrato'] || d['fecha_fin'] || '');
       const parsedFin = parseDateString(rawFechaFin);
 
-      const importeContrato = parseNumeric(d['Importe del contrato'] || d['importe_contrato']);
+      // Layout oficial: DRC (importe) o MFIJ (mínimo/máximo), no "Importe del contrato".
+      const drcRaw = String(d['Importe DRC'] || '').trim();
+      const mfijMinRaw = String(d['Monto sin imp./mínimo'] || '').trim();
+      const mfijMaxRaw = String(d['Monto sin imp./máximo'] || '').trim();
+      const importeContrato = parseNumeric(drcRaw || mfijMinRaw || mfijMaxRaw);
       
       // Manejar la doble columna 'Moneda'
-      const monedaContrato = String(d['Moneda_1'] || d['Moneda'] || d['moneda_contrato'] || 'MXN').trim().toUpperCase();
-      const estatus = String(d['Estatus del contrato'] || d['estatus_contrato'] || '').trim();
+      const monedaContrato = String((drcRaw ? d['Moneda_1'] : (d['Moneda_2'] || d['Moneda_1'])) || d['moneda_contrato'] || '').trim().toUpperCase();
+      const estatus = String(d['Estatus DRC'] || d['Estatus Contrato'] || d['estatus_contrato'] || '').trim();
       
       // Manejar doble columna 'Convenio modificatorio'
       const convInd = String(d['Convenio modificatorio_1'] || d['Convenio modificatorio'] || d['convenio_modificatorio_ind'] || '').trim();
@@ -168,20 +171,20 @@ export async function insertContratosBatch(
       const monedaConv = String(d['Moneda_2'] || d['moneda_convenio'] || '').trim().toUpperCase();
       const convTipo = String(d['Convenio modificatorio_2'] || d['convenio_modificatorio_tipo'] || '').trim();
 
-      const claveInst = String(d['Clave de la institución'] || d['clave_institucion'] || '').trim();
-      const nombreInst = String(d['Nombre de la institución'] || d['nombre_institucion'] || '').trim();
-      const siglasInst = String(d['Siglas de la institución'] || d['siglas_institucion'] || '').trim().toUpperCase();
-      const unidadComp = String(d['Nombre de la unidad compradora'] || d['nombre_unidad_compradora'] || '').trim();
+      const claveInst = String(d['Clave Institución'] || d['clave_institucion'] || '').trim();
+      const nombreInst = String(d['Institución'] || d['nombre_institucion'] || '').trim();
+      const siglasInst = String(d['Siglas de la Institución'] || d['siglas_institucion'] || '').trim().toUpperCase();
+      const unidadComp = String(d['Nombre de la UC'] || d['nombre_unidad_compradora'] || '').trim();
       
-      const codProcedimiento = String(d['Código del procedimiento'] || d['codigo_procedimiento'] || '').trim();
+      const codProcedimiento = String(d['Número de procedimiento'] || d['codigo_procedimiento'] || '').trim();
       const carProcedimiento = String(d['Carácter del procedimiento'] || d['caracter_procedimiento'] || '').trim();
-      const tipoProcedimiento = String(d['Tipo de procedimiento'] || d['tipo_procedimiento'] || '').trim();
-      const formaProcedimiento = String(d['Forma de procedimiento'] || d['forma_procedimiento'] || '').trim();
+      const tipoProcedimiento = String(d['Tipo Procedimiento'] || d['tipo_procedimiento'] || '').trim();
+      const formaProcedimiento = String(d['Forma de participación'] || d['forma_procedimiento'] || '').trim();
 
-      const rawRfc = String(d['RFC del proveedor o contratista'] || d['rfc_proveedor'] || '').trim();
+      const rawRfc = String(d['rfc'] || d['rfc_proveedor'] || '').trim();
       const rfcNorm = normalizeRFC(rawRfc);
 
-      const rawNombreProv = String(d['Nombre o razón social del proveedor o contratista'] || d['nombre_proveedor'] || '').trim();
+      const rawNombreProv = String(d['Proveedor o contratista'] || d['nombre_proveedor'] || '').trim();
       const nombreProvNorm = normalizeName(rawNombreProv);
 
       const direccionAnuncio = String(d['Dirección del anuncio'] || d['direccion_anuncio'] || '').trim();
@@ -191,12 +194,12 @@ export async function insertContratosBatch(
       const montoPag = parseNumeric(d['Monto pagado'] || d['monto_pagado']);
       const montoTotImp = parseNumeric(d['Monto total con impuestos'] || d['monto_total_impuestos']);
       const impDRC = parseNumeric(d['Importe DRC'] || d['importe_drc']);
-      const impMFIJ = parseNumeric(d['Importe MFIJ'] || d['importe_mfij']);
+      const impMFIJ = parseNumeric(d['Monto sin imp./mínimo'] || d['importe_mfij']);
 
       const rawJson = JSON.stringify(d);
 
       statements.push({
-        sql: `INSERT OR REPLACE INTO contratos (
+        sql: `INSERT OR IGNORE INTO contratos (
           id, codigo_contrato, titulo_contrato, descripcion_contrato, fecha_inicio, fecha_fin,
           importe_contrato, moneda, estatus_contrato, convenio_modificatorio_ind, monto_convenio,
           plazo_convenio, fecha_firma_convenio, moneda_convenio, convenio_modificatorio_tipo,
@@ -233,23 +236,15 @@ export async function insertContratosBatch(
 
   if (statements.length > 0) {
     try {
-      await client.batch(statements, 'write');
-      inserted = statements.length;
-
-      // Actualizar contador en archivos_importados
-      await client.execute({
-        sql: `UPDATE archivos_importados
-              SET filas_importadas = filas_importadas + ?,
-                  estado = CASE WHEN ? = 1 THEN 'completado' ELSE 'en_progreso' END
-              WHERE sha256 = ?;`,
-        args: [inserted, isLastChunk ? 1 : 0, fileSha256],
-      });
-    } catch (e: any) {
-      // Reintentar fila por fila en caso de fallo atómico
+      const results = await client.batch(statements, 'write');
+      inserted = results.reduce((sum, result) => sum + Number(result.rowsAffected || 0), 0);
+    } catch {
+      // Reintentos seguros: INSERT OR IGNORE evita que un lote ya confirmado
+      // vuelva a contabilizarse cuando falla la conexión del navegador.
       for (const stmt of statements) {
         try {
-          await client.execute(stmt);
-          inserted++;
+          const result = await client.execute(stmt);
+          inserted += Number(result.rowsAffected || 0);
         } catch {
           errors++;
         }
@@ -257,7 +252,28 @@ export async function insertContratosBatch(
     }
   }
 
-  return { inserted, errors };
+  // El final solo es válido si están realmente TODAS las filas esperadas.
+  // También se ejecuta para el lote final vacío.
+  await client.execute({
+    sql: `UPDATE archivos_importados
+          SET filas_importadas = filas_importadas + ?,
+              filas_anomalas = filas_anomalas + ?,
+              estado = CASE
+                WHEN ? = 1 AND filas_importadas + ? = total_filas AND ? = 0
+                THEN 'completado' ELSE 'en_progreso' END
+          WHERE sha256 = ?`,
+    args: [inserted, errors, isLastChunk ? 1 : 0, inserted, errors, fileSha256],
+  });
+
+  let completed = false;
+  if (isLastChunk) {
+    const finalState = await client.execute({
+      sql: 'SELECT estado FROM archivos_importados WHERE sha256 = ?',
+      args: [fileSha256],
+    });
+    completed = String(finalState.rows[0]?.estado || '') === 'completado';
+  }
+  return { inserted, errors, completed };
 }
 
 export interface SearchFilters {
@@ -467,9 +483,13 @@ export async function searchBulk(
           args: [...likeArgs, limitPerTerm],
         });
 
-        if (candidateRes.rows.length > 0) {
+        // LIKE solamente genera candidatos; sin validar similitud produce falsos positivos.
+        const verified = candidateRes.rows.filter(c =>
+          stringSimilarity(nameNorm, String(c.nombre_proveedor_norm || '')) >= 0.82
+        );
+        if (verified.length > 0) {
           matchType = 'FUZZY_NAME';
-          contracts = candidateRes.rows;
+          contracts = verified;
         }
       }
     }
