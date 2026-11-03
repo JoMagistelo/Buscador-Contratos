@@ -35,6 +35,38 @@ Diseñado para funcionar **100% bajo planes gratuitos**, sin tarjeta bancaria, c
 
 ---
 
+## ✅ Ruta recomendada para la PRIMERA CARGA: crear un archivo .db desde los CSV
+
+**No necesitas cargar 535,022 filas por el navegador ni instalar SQL Server.**
+Se incluye el script `scripts/generar_bd_contratos.py`, compatible con Python 3.10+ y sin paquetes externos. Conserva los 73 campos por registro y crea las mismas tablas que consulta la aplicación.
+
+**1.** Crea una carpeta, por ejemplo `C:\ContratosAPF\CSV`, y copia ahí tus siete `CONTRATOS_*.CSV` originales.
+
+**2.** Descarga [Python para Windows](https://www.python.org/downloads/windows/) si aún no lo tienes. En la consola CMD comprueba `py --version`.
+
+**3.** Desde GitHub descarga el proyecto mediante **Code → Download ZIP**, descomprímelo y entra a la carpeta del proyecto en CMD. Ejecuta:
+
+```cmd
+py scripts\generar_bd_contratos.py --source "C:\ContratosAPF\CSV" --output "C:\ContratosAPF\contratos_apf.db"
+```
+
+**4.** La salida debe indicar **535,022 contratos** y **7 archivos**, además de integridad SQLite correcta. Se verificó localmente la versión de los siete CSV recibidos: el archivo resultante ocupa **2,560,704,512 bytes** (unos 2.56 GB). No lo publiques en GitHub.
+
+**5.** En [Turso](https://app.turso.tech/), pulsa **Create Database** y selecciona la pestaña **Upload SQLite File** (NO **New Database**). Selecciona `C:\ContratosAPF\contratos_apf.db`, escribe el nombre `contratos-apf`, elige una ubicación y pulsa **Create Database**. La capacidad de subir archivos SQLite está documentada oficialmente por Turso; si el navegador presenta un límite de transferencia, utiliza `turso db import` de la CLI en lugar de reimportar las filas desde el frontend.
+
+**6.** Cuando termine, valida que Turso tiene las tablas `contratos` y `archivos_importados`. Ejecuta en su explorador SQL:
+
+```sql
+SELECT COUNT(*) AS contratos FROM contratos;
+SELECT year_file, COUNT(*) FROM contratos GROUP BY year_file ORDER BY year_file;
+```
+
+**7.** Obtén la URL HTTPS de la base y genera un token de acceso desde Turso. Pon ambas credenciales como **Secrets** del Worker en Cloudflare (`TURSO_DATABASE_URL` y `TURSO_AUTH_TOKEN`). Las contraseñas administrativas también van como Secrets.
+
+**Importante:** No necesitas volver a importar CSV después de subir este `.db`; la base ya contiene los contratos permanentemente. Las actualizaciones posteriores sí requerirán importar una nueva versión del año o reemplazar la base con controles de validación. El buscador público NO almacena los nombres ni RFC consultados.
+
+---
+
 ## 🚀 Guía Paso a Paso para Principiantes (Despliegue Gratuito)
 
 No necesitas experiencia previa en administración de servidores ni bases de datos. Sigue estos 12 pasos ordenados:
@@ -139,7 +171,7 @@ El importador calculará la huella SHA-256, verificará las 73 columnas, preserv
 ### Paso 10: Comprobar los 535,022 registros
 Al finalizar la carga de los 7 archivos:
 1. Revisa la tarjeta de resumen en el panel de administración: el contador debe marcar exactamente **535,022 contratos**.
-2. El consumo de almacenamiento reportará aproximadamente **640 MB**, quedando más de 4.3 GB libres dentro de tu cuota de 5 GB gratis en Turso.
+2. La base SQLite construida desde los CSV originales ocupa aproximadamente **2.56 GB**; los índices ya están incluidos. El espacio real en Turso puede variar y debe revisarse en su panel. El cálculo anterior de 640 MB era incorrecto.
 
 ---
 
@@ -157,7 +189,7 @@ Cuando la Secretaría de Anticorrupción y Buen Gobierno publique un nuevo CSV e
 [https://comprasmx.buengobierno.gob.mx/datos-abiertos](https://comprasmx.buengobierno.gob.mx/datos-abiertos)
 
 1. Entra a tu **Panel Administrativo**.
-2. En la tabla de archivos cargados, haz clic en el icono de papelera junto al año que vas a actualizar para retirar la versión anterior.
+2. Prepara y valida la versión nueva del año antes de retirar la anterior. No borres registros sin conservar respaldo de los CSV originales y verificar el procedimiento de sustitución.
 3. Selecciona el nuevo CSV y pulsa **Iniciar Carga por Fragmentos**.
 4. La base se actualizará limpiamente sin crear registros duplicados.
 
