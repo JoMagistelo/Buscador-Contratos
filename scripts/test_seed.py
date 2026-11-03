@@ -51,7 +51,7 @@ with tempfile.TemporaryDirectory() as tmp:
     conn = sqlite3.connect(str(dest))
     assert conn.execute("SELECT COUNT(*) FROM contratos").fetchone()[0] == 7
     assert conn.execute("SELECT COUNT(*) FROM archivos_importados").fetchone()[0] == 7
-    assert conn.execute("PRAGMA integrity_check").fetchone()[0][0] == "ok"
+    assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     sample = conn.execute("""SELECT rfc_proveedor, nombre_proveedor_norm,
         importe_contrato, raw_data_json FROM contratos LIMIT 1""").fetchone()
     assert sample[:3] == ("ABC010101XYZ", "ANGELA NUNEZ", 123.45)
