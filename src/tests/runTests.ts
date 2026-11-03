@@ -6,6 +6,8 @@ import {
   sanitizeForExcel,
   stringSimilarity,
   COLUMNAS_OFICIALES_73,
+  CSV_COLUMN_KEYS_73,
+  hydrateRawData,
 } from '../shared/contratosSchema.js';
 import { createSessionToken, verifySessionToken } from '../server/auth.js';
 
@@ -82,6 +84,15 @@ async function runTestSuite() {
   const convenios = COLUMNAS_OFICIALES_73.filter(c => c.headerOriginal === 'Convenio modificatorio');
   assert(convenios.length === 2, 'Contiene 2 columnas Convenio modificatorio oficiales');
   assert(convenios[0].id === 'convenio_modificatorio_ind' && convenios[1].id === 'convenio_modificatorio_tipo', 'Convenios diferenciados correctamente');
+
+  // PRUEBA ADICIONAL: Base SQLite compactada bajo el límite de 2 GB de Turso
+  const compact = CSV_COLUMN_KEYS_73.map((_, i) => i === 64 ? 'ABC010101XYZ' : i === 65 ? 'Ángela Núñez' : 'valor_' + i);
+  const hydrated = hydrateRawData(compact);
+  assert(CSV_COLUMN_KEYS_73.length === 73, 'Hay 73 encabezados reales en el layout oficial');
+  assert(hydrated['rfc'] === 'ABC010101XYZ', 'RFC preservado tras compactar JSON');
+  assert(hydrated['Proveedor o contratista'] === 'Ángela Núñez', 'Nombre y acentos preservados tras compactar JSON');
+  assert(hydrated['Moneda_1'] === 'valor_45' && hydrated['Moneda_2'] === 'valor_55', 'Dos monedas conservadas en posiciones independientes');
+  assert(Object.keys(hydrateRawData({ rfc: 'X' })).length === 1, 'Bases anteriores con JSON objeto siguen siendo compatibles');
 
   // PRUEBA 7: Seguridad de Autenticación HMAC Web Crypto
   console.log('\n7. Pruebas de Autenticación Administrativa HMAC-SHA256:');
