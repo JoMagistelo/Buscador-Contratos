@@ -157,6 +157,19 @@ def main():
                 headers = next(csv_reader)
                 if len(headers) != 73:
                     raise ValueError(f"{file.name}: {len(headers)} columnas (se esperaban 73)")
+                # Proteger contra archivos que tienen 73 columnas, pero distinto orden.
+                required_headers = {
+                    4: "Clave Institución", 6: "Institución", 23: "Número de procedimiento",
+                    35: "Código del contrato", 44: "Importe DRC", 45: "Moneda",
+                    51: "Monto sin imp./mínimo", 55: "Moneda", 64: "rfc",
+                    65: "Proveedor o contratista", 72: "Dirección del anuncio",
+                }
+                for position, expected_header in required_headers.items():
+                    if headers[position].strip() != expected_header:
+                        raise ValueError(
+                            f"{file.name}, columna {position + 1}: "
+                            f"encabezado {headers[position]!r}, se esperaba {expected_header!r}"
+                        )
                 if reference is None:
                     reference = headers
                 elif headers != reference:
