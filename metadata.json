@@ -1,0 +1,6 @@
+{
+  "name": "EXPLORADOR DE CONTRATOS APF",
+  "description": "Buscador público de contratos gubernamentales mexicanos de CompraNet y Compras MX con búsqueda masiva y exportación a Excel.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

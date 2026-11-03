@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "explorador-contratos-apf",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "html_handling": "single-page-application"
+  },
+  "vars": {
+    "TURSO_DATABASE_URL": "",
+    "TURSO_AUTH_TOKEN": "",
+    "ADMIN_PASSWORD": "",
+    "ADMIN_SESSION_SECRET": ""
+  }
+}
