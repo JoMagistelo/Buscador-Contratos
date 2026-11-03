@@ -1,5 +1,5 @@
 import Papa from 'papaparse';
-import { COLUMNAS_OFICIALES_73 } from '../shared/contratosSchema.js';
+import { CSV_COLUMN_KEYS_73 } from '../shared/contratosSchema.js';
 
 export interface ChunkProgress {
   totalRows: number;
@@ -32,15 +32,10 @@ export interface CsvValidationSummary {
  * Calcula la huella SHA-256 de un archivo en el navegador
  */
 export async function calculateFileSha256(file: File): Promise<string> {
-  const buffer = await file.slice(0, 1024 * 1024 * 20).arrayBuffer(); // Usar hasta los primeros 20MB para huella ultra-rápida + tamaño
-  const sizeBuf = new TextEncoder().encode(`size:${file.size}_name:${file.name}_lastMod:${file.lastModified}`);
-  const combined = new Uint8Array(buffer.byteLength + sizeBuf.byteLength);
-  combined.set(new Uint8Array(buffer), 0);
-  combined.set(sizeBuf, buffer.byteLength);
-
-  const hashBuffer = await crypto.subtle.digest('SHA-256', combined);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  // La huella debe representar TODO el CSV; nombre/mtime/20 MB no son SHA256 del archivo.
+  const buffer = await file.arrayBuffer();
+  const digest = await crypto.subtle.digest('SHA-256', buffer);
+  return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
 }
 
 /**
@@ -99,7 +94,7 @@ export async function inspectCsvHeader(file: File): Promise<CsvValidationSummary
           totalEstimatedRows,
           detectedYear,
           detectedColumnsCount: rawHeaders.length,
-          has73Columns: rawHeaders.length >= 70, // CompraNet / Compras MX oscilan entre 70 y 73 columnas oficiales
+          has73Columns: rawHeaders.length === 73 && rawHeaders.every((h, i) => h.trim() === CSV_COLUMN_KEYS_73[i].replace(/_(1|2)$/, '')),
           duplicateHeadersDetected: duplicateHeaders,
           sampleRows: results.data.slice(1, 4),
         });
@@ -192,6 +187,7 @@ export class ChunkCsvUploader {
     let headersMap: string[] = [];
     let currentBatch: any[] = [];
     let globalRowIndex = 0;
+    let invalidRows = 0;
 
     return new Promise((resolve, reject) => {
       // Usar FileReader + TextDecoder para Windows-1252 streaming
@@ -211,6 +207,8 @@ export class ChunkCsvUploader {
             parser.pause();
             await new Promise((r) => setTimeout(r, 400));
           }
+          if (this.isCancelled) { parser.abort(); return resolve({ success: false, totalProcessed: this.processedRows, errorsCount: this.errorsCount }); }
+          if (!this.isPaused) parser.resume();
 
           const row = results.data as string[];
           if (!row || row.length === 0) return;
@@ -231,6 +229,13 @@ export class ChunkCsvUploader {
               return h;
             });
             return;
+          }
+
+          // Rechazar filas rotas antes de insertar cualquier dato de esa fila.
+          if (row.length !== headersMap.length) {
+            invalidRows++;
+            parser.abort();
+            return reject(new Error(`Fila CSV ${globalRowIndex + 1}: ${row.length} columnas, se esperaban ${headersMap.length}.`));
           }
 
           // Convertir fila a objeto con claves estructuradas
@@ -276,15 +281,17 @@ export class ChunkCsvUploader {
           }
         },
         complete: async () => {
-          // Enviar último lote remanente si existe
-          if (currentBatch.length > 0 && !this.isCancelled) {
+          // Enviar cierre también si el último lote terminó justo en el tamaño de chunk.
+          if (!this.isCancelled) {
             this.chunkIndex++;
             try {
               await this.uploadChunk(currentBatch, true);
               this.processedRows += currentBatch.length;
               currentBatch = [];
-            } catch (err) {
+            } catch (err: any) {
               this.errorsCount += currentBatch.length;
+              this.emitProgress('error', err.message);
+              return reject(err);
             }
           }
 
@@ -336,7 +343,7 @@ export class ChunkCsvUploader {
     this.onProgress({
       totalRows: this.processedRows,
       processedRows: this.processedRows,
-      percentage: status === 'completed' ? 100 : Math.min(99, Math.round((this.processedRows / estTotal) * 100)),
+      percentage: status === 'completed' ? 100 : Math.min(99, Math.round((this.processedRows / Math.max(this.totalRowsCount, this.processedRows + 1)) * 100)),
       speedRowsPerSec: speed,
       currentChunk: this.chunkIndex,
       totalChunks: this.chunkIndex + (status === 'completed' ? 0 : 1),
