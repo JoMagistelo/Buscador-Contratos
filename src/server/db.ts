@@ -1,7 +1,7 @@
 import { createClient as createLocalClient } from '@libsql/client';
 import { createClient as createTursoClient } from '@tursodatabase/serverless/compat';
 import type { Client } from '@libsql/client';
-import { normalizeName, normalizeRFC, parseNumeric, parseDateString, stringSimilarity } from '../shared/contratosSchema.js';
+import { normalizeName, normalizeRFC, parseNumeric, parseDateString, stringSimilarity, hydrateRawData } from '../shared/contratosSchema.js';
 
 /**
  * Remote connections use the Turso Cloud HTTP driver, compatible with Workers.
@@ -530,7 +530,7 @@ export async function getContratoFull(client: Client, id: string) {
   const row = res.rows[0];
   let rawJson = {};
   try {
-    rawJson = JSON.parse(String(row.raw_data_json || '{}'));
+    rawJson = hydrateRawData(JSON.parse(String(row.raw_data_json || '{}')));
   } catch {
     rawJson = {};
   }
