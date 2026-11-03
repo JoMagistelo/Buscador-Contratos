@@ -332,8 +332,11 @@ export class ChunkCsvUploader {
     });
 
     if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`Fallo HTTP ${response.status}: ${errText}`);
+      throw new Error(`Fallo HTTP ${response.status} al importar CSV`);
+    }
+    const result = await response.json();
+    if (!result.success) {
+      throw new Error('No se pudo validar la importación. Reintenta el lote o revisa el recuento de filas.');
     }
   }
 
