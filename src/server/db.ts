@@ -118,7 +118,7 @@ export async function insertContratosBatch(
   chunkIndex: number,
   isLastChunk: boolean,
   rows: RawContratoRow[]
-): Promise<{ inserted: number; errors: number }> {
+): Promise<{ inserted: number; errors: number; completed: boolean }> {
   let inserted = 0;
   let errors = 0;
 
@@ -265,7 +265,15 @@ export async function insertContratosBatch(
     args: [inserted, errors, isLastChunk ? 1 : 0, inserted, errors, fileSha256],
   });
 
-  return { inserted, errors };
+  let completed = false;
+  if (isLastChunk) {
+    const finalState = await client.execute({
+      sql: 'SELECT estado FROM archivos_importados WHERE sha256 = ?',
+      args: [fileSha256],
+    });
+    completed = String(finalState.rows[0]?.estado || '') === 'completado';
+  }
+  return { inserted, errors, completed };
 }
 
 export interface SearchFilters {
