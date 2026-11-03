@@ -18,6 +18,7 @@ export interface EnvBindings {
   TURSO_AUTH_TOKEN?: string;
   ADMIN_PASSWORD?: string;
   ADMIN_SESSION_SECRET?: string;
+  ASSETS?: { fetch(request: Request): Promise<Response> };
 }
 
 export function createApiApp(bindings?: EnvBindings) {
@@ -30,7 +31,8 @@ export function createApiApp(bindings?: EnvBindings) {
 
   // Helper de autenticación administrativa
   const requireAdmin = async (c: any, next: any) => {
-    const secret = getEnvVar(c, 'ADMIN_SESSION_SECRET') || 'apf-admin-fallback-dev-secret-32chars';
+    const secret = getEnvVar(c, 'ADMIN_SESSION_SECRET');
+    if (!secret || secret.length < 32) return c.json({ error: 'Configuración administrativa incompleta' }, 503);
     const authHeader = c.req.header('Authorization');
     let token = '';
 
@@ -78,7 +80,7 @@ export function createApiApp(bindings?: EnvBindings) {
 
       return c.json(result);
     } catch (error: any) {
-      return c.json({ error: 'Error al consultar contratos', details: error.message }, 500);
+      return c.json({ error: 'Error al consultar contratos' }, 500);
     }
   });
 
@@ -98,7 +100,7 @@ export function createApiApp(bindings?: EnvBindings) {
 
       return c.json(result);
     } catch (error: any) {
-      return c.json({ error: 'Error en búsqueda masiva', details: error.message }, 500);
+      return c.json({ error: 'Error en búsqueda masiva' }, 500);
     }
   });
 
@@ -120,7 +122,7 @@ export function createApiApp(bindings?: EnvBindings) {
 
       return c.json(contrato);
     } catch (error: any) {
-      return c.json({ error: 'Error al obtener ficha de contrato', details: error.message }, 500);
+      return c.json({ error: 'Error al obtener ficha de contrato' }, 500);
     }
   });
 
@@ -145,8 +147,9 @@ export function createApiApp(bindings?: EnvBindings) {
     try {
       const body = await c.req.json();
       const enteredPass = String(body.password || '').trim();
-      const adminPass = getEnvVar(c, 'ADMIN_PASSWORD') || 'admin123';
-      const secret = getEnvVar(c, 'ADMIN_SESSION_SECRET') || 'apf-admin-fallback-dev-secret-32chars';
+      const adminPass = getEnvVar(c, 'ADMIN_PASSWORD');
+      const secret = getEnvVar(c, 'ADMIN_SESSION_SECRET');
+      if (!adminPass || !secret || secret.length < 32) return c.json({ error: 'Configure ADMIN_PASSWORD y ADMIN_SESSION_SECRET antes de iniciar sesión' }, 503);
 
       if (!enteredPass || enteredPass !== adminPass) {
         return c.json({ error: 'Contraseña de administrador incorrecta.' }, 401);
@@ -155,16 +158,17 @@ export function createApiApp(bindings?: EnvBindings) {
       const token = await createSessionToken(secret, 'admin');
 
       // Establecer cookie HttpOnly
-      c.header('Set-Cookie', `admin_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`);
+      c.header('Cache-Control', 'no-store');
+      c.header('Set-Cookie', `admin_session=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=86400`);
       return c.json({ success: true, token, message: 'Sesión administrativa iniciada correctamente.' });
     } catch (error: any) {
-      return c.json({ error: 'Error al iniciar sesión', details: error.message }, 500);
+      return c.json({ error: 'Error al iniciar sesión' }, 500);
     }
   });
 
   // Cierre de sesión administrativo
   app.post('/api/admin/logout', async (c) => {
-    c.header('Set-Cookie', `admin_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+    c.header('Set-Cookie', `admin_session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`);
     return c.json({ success: true });
   });
 
@@ -235,7 +239,7 @@ export function createApiApp(bindings?: EnvBindings) {
         errors: result.errors,
       });
     } catch (error: any) {
-      return c.json({ error: 'Error al procesar fragmento', details: error.message }, 500);
+      return c.json({ error: 'Error al procesar fragmento' }, 500);
     }
   });
 
